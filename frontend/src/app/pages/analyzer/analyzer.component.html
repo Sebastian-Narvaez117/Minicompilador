@@ -1,0 +1,237 @@
+<div class="app-shell">
+  <!-- HEADER -->
+  <header class="app-header">
+    <div class="header-brand">
+      <div class="brand-icon">
+        <mat-icon>token</mat-icon>
+      </div>
+      <div>
+        <h1>Minicompilador</h1>
+        <p class="brand-sub">AFD + LLM &rarr; Parser &rarr; Java</p>
+      </div>
+    </div>
+  </header>
+
+  <!-- INPUT SECTION -->
+  <section class="input-section">
+    <mat-card class="input-card">
+      <div class="input-header">
+        <div class="input-header-left">
+          <mat-icon class="input-icon">edit_note</mat-icon>
+          <h2>Instrucción</h2>
+        </div>
+        <button mat-flat-button color="primary" class="btn-analyze" (click)="analyze()"
+          [disabled]="sourceControl.invalid || isSubmitting()">
+          <mat-icon>play_arrow</mat-icon>
+          {{ isSubmitting() ? 'Analizando...' : 'Analizar' }}
+        </button>
+      </div>
+
+      <mat-form-field appearance="outline" class="source-field" subscriptSizing="dynamic">
+        <textarea matInput [formControl]="sourceControl" rows="3" cdkTextareaAutosize
+          placeholder="Ej: convertir 100 celsius a fahrenheit"></textarea>
+      </mat-form-field>
+
+      <!-- Syntax hint -->
+      <div class="syntax-hint">
+        <code class="pattern">convertir &lt;número&gt; &lt;origen&gt; a &lt;destino&gt;</code>
+      </div>
+
+      <!-- Valid units -->
+      <div class="units-row">
+        <span class="units-label">Unidades válidas:</span>
+        @for (g of unitGroups; track g.name) {
+          <span class="unit-pill" [style.--pill-color]="g.color">
+            <mat-icon>thermostat</mat-icon>
+            <strong>{{ g.name }}</strong>
+            <span class="unit-synonyms">{{ g.synonyms }}</span>
+          </span>
+        }
+      </div>
+
+      <!-- Quick examples -->
+      <div class="examples-row">
+        <span class="examples-label">Ejemplos:</span>
+        @for (ex of examples; track ex) {
+          <button class="example-chip" (click)="fillExample(ex)">
+            <mat-icon>content_paste</mat-icon>
+            {{ ex }}
+          </button>
+        }
+      </div>
+    </mat-card>
+  </section>
+
+  <!-- LOADING OVERLAY -->
+  @if (isSubmitting()) {
+    <div class="loading-bar"><div class="loading-bar-inner"></div></div>
+  }
+
+  <!-- RESULTS -->
+  @if (response(); as res) {
+    <!-- PIPELINE STATUS -->
+    <section class="pipeline-section">
+      <h2 class="section-title">Pipeline de análisis</h2>
+      <div class="pipeline-grid">
+        <!-- Fase 1: Léxico -->
+        <div class="phase-card">
+          <div class="phase-header">
+            <mat-icon class="phase-icon" style="color:#5da6ff">memory</mat-icon>
+            <span class="phase-name">Léxico</span>
+          </div>
+          <div class="phase-badges">
+            <span class="mini-badge" style="background:rgba(93,166,255,0.2);color:#b8d6ff">AFD: {{ res.automata.length }}</span>
+            <span class="mini-badge" style="background:rgba(123,97,255,0.2);color:#d4c9ff">LLM: {{ res.llm.length }}</span>
+          </div>
+          <span class="phase-status ok">Listo</span>
+        </div>
+
+        <!-- Fase 2: Sintáctico -->
+        <div class="phase-card">
+          <div class="phase-header">
+            <mat-icon class="phase-icon" style="color:#ffb74d">account_tree</mat-icon>
+            <span class="phase-name">Sintáctico</span>
+          </div>
+          <span class="phase-status {{ phaseStatus(res.syntax) }}">{{ phaseLabel(res.syntax) }}</span>
+          @if (res.syntax?.message) {
+            <p class="phase-msg">{{ res.syntax?.message }}</p>
+          }
+        </div>
+
+        <!-- Fase 3: Semántico -->
+        <div class="phase-card">
+          <div class="phase-header">
+            <mat-icon class="phase-icon" style="color:#81c784">verified</mat-icon>
+            <span class="phase-name">Semántico</span>
+          </div>
+          <span class="phase-status {{ phaseStatus(res.semantic) }}">{{ phaseLabel(res.semantic) }}</span>
+          @if (res.semantic?.message) {
+            <p class="phase-msg">{{ res.semantic?.message }}</p>
+          }
+          @if (res.semantic?.rule) {
+            <p class="phase-rule">{{ res.semantic?.rule }}</p>
+          }
+        </div>
+
+        <!-- Métricas -->
+        <div class="phase-card metrics-card">
+          <div class="phase-header">
+            <mat-icon class="phase-icon" style="color:#aab1c9">speed</mat-icon>
+            <span class="phase-name">Métricas</span>
+          </div>
+          <div class="metrics-grid">
+            <div class="metric">
+              <span class="metric-label">AFD</span>
+              <span class="metric-value">{{ formatMs(res.metrics?.automata_ms) }}</span>
+            </div>
+            <div class="metric">
+              <span class="metric-label">LLM</span>
+              <span class="metric-value">{{ formatMs(res.metrics?.llm_ms) }}</span>
+            </div>
+            <div class="metric total">
+              <span class="metric-label">Total</span>
+              <span class="metric-value">{{ formatMs(res.metrics?.total_ms) }}</span>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- OVERALL RESULT -->
+    <section class="result-section">
+      <mat-card class="result-card {{ res.valid ? 'result-ok' : 'result-fail' }}">
+        <div class="result-icon">
+          <mat-icon>{{ res.valid ? 'check_circle' : (res.status === 'unavailable' ? 'cloud_off' : 'cancel') }}</mat-icon>
+        </div>
+        <div class="result-body">
+          <h3>{{ res.valid ? 'Instrucción válida' : 'Instrucción inválida' }}</h3>
+          <p>{{ res.message }}</p>
+          @if (res.status === 'unavailable') {
+            <p class="hint">Ejecuta <code>cd java_semantic && .\run.ps1</code> para activar el servicio Java</p>
+          }
+        </div>
+      </mat-card>
+    </section>
+
+    <!-- TOKENS -->
+    <section class="tokens-section">
+      <h2 class="section-title">Tokens</h2>
+
+      <div class="token-tables">
+        <mat-card class="token-card">
+          <div class="token-card-header">
+            <mat-icon style="color:#5da6ff">memory</mat-icon>
+            <h3>AFD</h3>
+            <span class="token-count">{{ res.automata.length }}</span>
+          </div>
+          @if (res.automata.length === 0) {
+            <p class="empty-tokens">Sin tokens</p>
+          } @else {
+            <div class="token-list">
+              @for (t of res.automata; track t) {
+                <div class="token-chip afd">
+                  <span class="t-type">{{ formatToken(t.token) }}</span>
+                  <span class="t-lexeme">"{{ t.lexeme }}"</span>
+                </div>
+              }
+            </div>
+          }
+        </mat-card>
+
+        <mat-card class="token-card">
+          <div class="token-card-header">
+            <mat-icon style="color:#7b61ff">psychology</mat-icon>
+            <h3>LLM</h3>
+            <span class="token-count">{{ res.llm.length }}</span>
+          </div>
+          @if (res.llm.length === 0) {
+            <p class="empty-tokens">Sin tokens</p>
+          } @else {
+            <div class="token-list">
+              @for (t of res.llm; track t) {
+                <div class="token-chip llm">
+                  <span class="t-type">{{ formatToken(t.token) }}</span>
+                  <span class="t-lexeme">"{{ t.lexeme }}"</span>
+                </div>
+              }
+            </div>
+          }
+        </mat-card>
+
+        <mat-card class="token-card merged-card">
+          <div class="token-card-header">
+            <mat-icon style="color:#4dd0e1">merge_type</mat-icon>
+            <h3>Fusionados</h3>
+            <span class="token-count">{{ res.merged.length }}</span>
+          </div>
+          @if (res.merged.length === 0) {
+            <p class="empty-tokens">Sin tokens</p>
+          } @else {
+            <div class="token-list">
+              @for (t of res.merged; track t) {
+                <div class="token-chip {{ t.source === 'AFD' ? 'afd' : 'llm' }}">
+                  <span class="t-type">{{ formatToken(t.token) }}</span>
+                  <span class="t-lexeme">"{{ t.lexeme }}"</span>
+                  <span class="t-pos">[{{ t.position }}]</span>
+                </div>
+              }
+            </div>
+          }
+        </mat-card>
+      </div>
+    </section>
+  }
+
+  <!-- ERROR STATE -->
+  @if (errorMessage(); as err) {
+    @if (!response()) {
+      <mat-card class="error-card">
+        <mat-icon>error</mat-icon>
+        <div>
+          <h3>Error {{ httpStatus() }}</h3>
+          <p>{{ err }}</p>
+        </div>
+      </mat-card>
+    }
+  }
+</div>

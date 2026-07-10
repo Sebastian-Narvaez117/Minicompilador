@@ -1,0 +1,93 @@
+html {
+  min-height: 100%;
+}
+
+body {
+  margin: 0;
+  min-height: 100%;
+  font-family: 'Inter', 'Segoe UI', sans-serif;
+  background: #070b16;
+  color: #e7edf4;
+  -webkit-font-smoothing: antialiased;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+button {
+  font: inherit;
+}
+
+/* Angular Material overrides for dark theme */
+.mat-mdc-form-field {
+  width: 100%;
+}
+
+.mat-mdc-text-field-wrapper {
+  background-color: rgba(255, 255, 255, 0.04) !important;
+  border-radius: 12px !important;
+}
+
+.mat-mdc-form-field-focus-overlay {
+  background-color: transparent !important;
+}
+
+.mdc-text-field--outlined {
+  --mdc-outlined-text-field-outline-color: rgba(255, 255, 255, 0.1);
+  --mdc-outlined-text-field-focus-outline-color: #5da6ff;
+  --mdc-outlined-text-field-label-color: #7f8eb3;
+  --mdc-outlined-text-field-input-text-color: #e0e8f8;
+
+  .mdc-floating-label {
+    color: #7f8eb3;
+  }
+
+  .mdc-text-field__input {
+    color: #e0e8f8;
+    caret-color: #5da6ff;
+  }
+}
+
+.mat-mdc-raised-button.mat-primary,
+.mat-mdc-flat-button.mat-primary {
+  --mdc-filled-button-container-color: linear-gradient(135deg, #5da6ff, #7b61ff);
+  --mdc-filled-button-label-text-color: #fff;
+  border-radius: 12px;
+}
+
+.mat-mdc-unelevated-button:not(:disabled) {
+  background: linear-gradient(135deg, #5da6ff, #7b61ff) !important;
+}
+
+// Snackbar styles
+.snack-bar-error {
+  --mdc-snackbar-container-color: rgba(220, 50, 50, 0.9);
+  --mat-snack-bar-button-color: #fff;
+}
+
+.mat-mdc-snack-bar-container {
+  border-radius: 12px !important;
+}
+
+/* Scrollbar */
+::-webkit-scrollbar {
+  width: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.1);
+  border-radius: 3px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 255, 255, 0.2);
+}
+
+::selection {
+  background: rgba(93, 166, 255, 0.3);
+}
