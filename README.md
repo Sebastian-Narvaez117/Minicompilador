@@ -1,115 +1,99 @@
-# Analizador Léxico para Conversión de Unidades de Temperatura
+# Minicompilador — Conversión de Unidades de Temperatura
 
-Sistema que analiza instrucciones en lenguaje natural del tipo `convertir 100 celsius a fahrenheit` combinando un **AFD** (expresiones regulares) con un **LLM** (Groq) para el análisis léxico, un **parser descendente recursivo** para la sintaxis, y un **servicio Java** independiente para la validación semántica.
+Sistema que analiza instrucciones en lenguaje natural como `convertir 100 celsius a fahrenheit` y devuelve el resultado de la conversión. Combina un **AFD** (regex) con un **LLM** (Groq) para el análisis léxico, un **parser descendente recursivo** para la sintaxis, un **servicio Java** para la semántica, y una **fase de conversión** que aplica las fórmulas.
 
 ---
 
 ## Arquitectura (MVC)
 
 ```
-app.py  (punto de entrada Flask)
+app.py  (Flask)
   │
-  ├── views/lexical_routes.py       ← CAPA DE PRESENTACIÓN (HTTP)
-  │     Llama al controlador y decide el código HTTP de respuesta
+  ├── views/lexical_routes.py          ← CAPA HTTP
+  │     POST /api/analyze
   │
-  ├── controllers/compiler_controller.py  ← CAPA DE ORQUESTACIÓN
-  │     Orquesta: AFD → LLM → Merge → Sintaxis → Semántica (Java)
+  ├── controllers/compiler_controller.py  ← ORQUESTACIÓN
+  │     AFD → LLM → Merge → Sintaxis → Semántica → Conversión
   │
-  ├── services/syntax_service.py     ← CAPA DE SERVICIOS
-  │     Valida la sintaxis usando el parser
+  ├── services/
+  │   ├── syntax_service.py            ← Validación sintáctica
+  │   └── conversion_service.py        ← Fórmulas de temperatura
   │
-  ├── models/                        ← CAPA DE MODELOS (datos y lógica de negocio)
-  │     ├── token.py          (entidad Token)
-  │     ├── ast.py            (nodo del AST)
-  │     ├── errors.py         (excepciones del parser)
-  │     ├── automata.py       (AFD: reconoce NUMERO y PREPOSICION_A)
-  │     ├── llm_model.py      (Groq: reconoce CONVERTIR y UNIDADES)
-  │     └── parser.py         (analizador sintáctico descendente recursivo)
+  ├── models/
+  │   ├── token.py           (Token)
+  │   ├── ast.py             (ASTNode)
+  │   ├── errors.py          (ParserError)
+  │   ├── automata.py        (AFD: NUMERO, PREPOSICION_A)
+  │   ├── llm_model.py       (Groq: CONVERTIR, UNIDADES)
+  │   └── parser.py          (parser descendente recursivo)
   │
-  └── java_semantic/                 ← MICROSERVICIO JAVA
-        Servicio HTTP (puerto 8090) que valida la semántica.
+  └── java_semantic/                   ← Microservicio Java (puerto 8090)
+        valida reglas semánticas
 ```
 
 ---
 
-## Pipeline de Análisis (3 fases)
+## Pipeline (4 fases)
 
 ```
-Entrada: "convertir 100 celsius a fahrenheit"
-                    │
-    ┌───────────────┴───────────────┐
-    ▼                               ▼
-FASE 1A: AFD                    FASE 1B: LLM (Groq)
-(models/automata.py)             (models/llm_model.py)
-                                │
-  Reconoce:                     Reconoce:
-  • NUMERO  → "100"             • CONVERTIR      → "convertir"
-  • PREPOSICION_A → "a"         • UNIDAD_ORIGEN_C → "celsius"
-                                • UNIDAD_DESTINO_F → "fahrenheit"
-    │                               │
-    └───────────────┬───────────────┘
-                    ▼
-           FUSIÓN (merge por posición)
-                    │
-                    ▼
-           FASE 2: SINTAXIS
-           (services/syntax_service.py → models/parser.py)
-           ¿Los tokens están en el orden correcto?
-           Si sí → genera AST (Árbol de Sintaxis Abstracta)
-           Si no  → error "incomplete" o "invalid"
-                    │
-                    ▼
-           FASE 3: SEMÁNTICA (Java)
-           (java_semantic → puerto 8090)
-           ¿La instrucción tiene sentido?
-           • Regla 1: ¿unidad origen ≠ unidad destino?
-           • Regla 2: ¿número > 0?
-           • Regla 3: ¿Kelvin no negativo?
-                    │
-                    ▼
-           RESPUESTA JSON
+"convertir -5 celsius a kelvin"
+          │
+  ┌───────┴───────┐
+  ▼               ▼
+AFD             LLM (Groq)
+(regex)         (prompt)
+  │               │
+  │ NUMERO "-5"   │ CONVERTIR
+  │ PREPOSICION_A │ UNIDAD_ORIGEN_C
+  │               │ UNIDAD_DESTINO_K
+  └───────┬───────┘
+          ▼
+     MERGE por posición
+          │
+          ▼
+     FASE 2: SINTAXIS (parser)
+     ¿orden correcto?
+     Si → AST
+     No → error "incomplete"/"invalid"
+          │
+          ▼
+     FASE 3: SEMÁNTICA (Java)
+     • Regla 1: ¿origen ≠ destino?
+     • Regla 2: ¿Kelvin ≥ 0?
+          │
+          ▼
+     FASE 4: CONVERSIÓN (Python)
+     Aplica fórmula según par (origen, destino)
+          │
+          ▼
+     RESPUESTA JSON
 ```
 
 ---
 
-## ¿Dónde se definen los TOKENS?
+## Tokens
 
-Los tokens se definen en **dos lugares** porque cada fuente reconoce unos distintos:
+### AFD — `models/automata.py`
 
-### 1. AFD — `models/automata.py` (línea 6-10)
+| Token | Regex | Ejemplo |
+|-------|-------|---------|
+| `NUMERO` | `-?\d+(\.\d+)?` | `100`, `-5`, `32.5` |
+| `PREPOSICION_A` | `\ba\b` | `a` |
+| `SPACE` | `\s+` | (se ignora) |
+| `UNKNOWN` | `[^\s]+` | (se filtra, lo toma el LLM) |
 
-```python
-TOKEN_PATTERNS = [
-    ("NUMERO",         r"\d+(\.\d+)?"),   # números enteros y decimales
-    ("PREPOSICION_A",  r"\ba\b"),          # palabra "a"
-    ("SPACE",          r"\s+"),            # espacios (se ignoran)
-    ("UNKNOWN",        r"[^\s]+"),         # todo lo demás (se filtra)
-]
-```
+### LLM (Groq) — `models/llm_model.py`
 
-- Solo reconoce `NUMERO` y `PREPOSICION_A` mediante **expresiones regulares**.
-- El resto se marca `UNKNOWN` y se **filtra** (esos los reconocerá el LLM).
+El prompt define sinónimos. El LLM distingue si la unidad está antes o después de la preposición "a" para asignar `UNIDAD_ORIGEN_*` o `UNIDAD_DESTINO_*`.
 
-### 2. LLM (Groq) — `models/llm_model.py:_build_prompt()` (línea 91)
-
-El prompt contiene una **tabla de sinónimos** que el LLM usa para reconocer:
-
-| Token | Sinónimos que reconoce |
-|-------|----------------------|
+| Token | Sinónimos |
+|-------|-----------|
 | `CONVERTIR` | convertir |
-| `UNIDAD_ORIGEN_C` | celsius, centígrados, grado centígrado, grados centígrados, °C |
-| `UNIDAD_ORIGEN_F` | fahrenheit, grados fahrenheit, °F |
-| `UNIDAD_ORIGEN_K` | kelvin, grados kelvin, K |
-| `UNIDAD_DESTINO_C` | celsius, centígrados, grado centígrado, grados centígrados, °C |
-| `UNIDAD_DESTINO_F` | fahrenheit, grados fahrenheit, °F |
-| `UNIDAD_DESTINO_K` | kelvin, grados kelvin, K |
+| `UNIDAD_ORIGEN_C` / `UNIDAD_DESTINO_C` | celsius, centígrados, grado centígrado, grados centígrados, °C, °c |
+| `UNIDAD_ORIGEN_F` / `UNIDAD_DESTINO_F` | fahrenheit, grados fahrenheit, °F, °f |
+| `UNIDAD_ORIGEN_K` / `UNIDAD_DESTINO_K` | kelvin, grados kelvin, K |
 
-- El LLM **nunca** inventa palabras: solo devuelve lexemas que existen literalmente en el texto.
-- Reconoce mayúsculas/minúsculas y variaciones (acentos, símbolos °C/°F/K).
-
-### 3. Gramática — `models/parser.py` (línea 11-17)
-
-El parser **valida el orden** de los tokens:
+### Gramática — `models/parser.py`
 
 ```
 Programa       ::= Instruccion
@@ -118,65 +102,82 @@ UnidadOrigen   ::= UNIDAD_ORIGEN_C | UNIDAD_ORIGEN_F | UNIDAD_ORIGEN_K
 UnidadDestino  ::= UNIDAD_DESTINO_C | UNIDAD_DESTINO_F | UNIDAD_DESTINO_K
 ```
 
-**Ejemplo válido:** `CONVERTIR NUMERO UNIDAD_ORIGEN_C PREPOSICION_A UNIDAD_DESTINO_F`
-**Ejemplo inválido:** `NUMERO CONVERTIR ...` (CONVERTIR debe ir primero)
+---
 
-### Resumen visual de quién reconoce qué
+## Reglas Semánticas (Java — `SemanticValidator.java`)
 
-| Token | Reconocido por | Método |
-|-------|---------------|--------|
-| `NUMERO` (ej: 100) | AFD | Regex `\d+(\.\d+)?` |
-| `PREPOSICION_A` (a) | AFD | Regex `\ba\b` |
-| `CONVERTIR` | LLM (Groq) | Tabla de sinónimos en prompt |
-| `UNIDAD_ORIGEN_C/F/K` | LLM (Groq) | Tabla de sinónimos en prompt |
-| `UNIDAD_DESTINO_C/F/K` | LLM (Groq) | Tabla de sinónimos en prompt |
+1. **Misma unidad**: No convertir una unidad a sí misma (ej: celsius → celsius).
+2. **Kelvin no negativo**: Si el origen es Kelvin, el valor debe ser ≥ 0.
+
+Celsius y Fahrenheit **sí** aceptan valores negativos.
+
+---
+
+## Fórmulas de Conversión
+
+| Origen → Destino | Fórmula |
+|-----------------|---------|
+| Celsius → Fahrenheit | °F = (°C × 1.8) + 32 |
+| Celsius → Kelvin | K = °C + 273.15 |
+| Fahrenheit → Celsius | °C = (°F − 32) ÷ 1.8 |
+| Fahrenheit → Kelvin | K = (°F − 32) ÷ 1.8 + 273.15 |
+| Kelvin → Celsius | °C = K − 273.15 |
+| Kelvin → Fahrenheit | °F = (K − 273.15) × 1.8 + 32 |
 
 ---
 
 ## Estructura del Proyecto
 
 ```
-analizador_lexico/
+Minicompilador/
+├── app.py                          # Flask entry point
+├── .env                            # GROQ_API_KEY, JAVA_SEMANTIC_URL, etc.
+├── requirements.txt
 │
-├── app.py                          # Punto de entrada Flask
-├── .env                            # Variables de entorno (GROQ_API_KEY, etc.)
-├── requirements.txt                # Dependencias Python
-│
-├── models/                         # Modelos: datos + lógica de negocio
-│   ├── __init__.py
-│   ├── token.py                    # Entidad Token (tipo + lexema)
-│   ├── ast.py                      # Nodo del Árbol de Sintaxis Abstracta
-│   ├── errors.py                   # Excepciones del parser
-│   ├── automata.py                 # AFD: reconoce NUMERO y PREPOSICION_A
-│   ├── llm_model.py                # Cliente LLM (Groq): reconoce CONVERTIR y UNIDADES
+├── models/
+│   ├── token.py                    # Token (token, lexeme, position, source)
+│   ├── ast.py                      # ASTNode (name, value, children)
+│   ├── errors.py                   # ParserError, UnexpectedTokenError, MissingTokenError
+│   ├── automata.py                 # AFD con regex
+│   ├── llm_model.py                # Cliente Groq para tokenización
 │   └── parser.py                   # Parser descendente recursivo
 │
-├── services/                       # Servicios de validación
-│   ├── __init__.py
-│   └── syntax_service.py           # Valida sintaxis usando el parser
+├── services/
+│   ├── syntax_service.py           # Wrapper del parser
+│   └── conversion_service.py       # Lógica de conversión térmica
 │
-├── controllers/                    # Orquestación del pipeline
-│   ├── __init__.py
-│   └── compiler_controller.py     # Coordina AFD → LLM → Merge → Sintaxis → Java
+├── controllers/
+│   └── compiler_controller.py      # Orquesta el pipeline completo
 │
-├── views/                          # Presentación HTTP
-│   ├── __init__.py
-│   └── lexical_routes.py          # Endpoint POST /api/analyze
+├── views/
+│   └── lexical_routes.py           # POST /api/analyze
 │
-├── java_semantic/                  # Microservicio de validación semántica (Java)
-│   ├── build.ps1
-│   ├── run.ps1
+├── java_semantic/
 │   ├── lib/gson.jar
 │   └── src/semantic/
-│       ├── SemanticServer.java     # Servidor HTTP (puerto 8090)
-│       ├── service/SemanticValidator.java  # Reglas semánticas
+│       ├── SemanticServer.java         # Servidor HTTP (puerto 8090)
+│       ├── service/SemanticValidator.java
 │       ├── model/AstNode.java
-│       └── exception/             # SameUnitException, NegativeValueException, etc.
+│       └── exception/
+│           ├── SemanticException.java
+│           ├── SameUnitException.java
+│           └── NegativeKelvinException.java
 │
-├── tests/                          # Pruebas unitarias
+├── tests/
 │   └── test_syntax_validator.py
 │
-└── frontend/                       # Frontend Angular (opcional)
+└── frontend/                       # Angular 20 (standalone)
+    ├── src/app/
+    │   ├── models/
+    │   │   ├── token.model.ts
+    │   │   └── response.model.ts
+    │   ├── core/services/
+    │   │   └── lexical.service.ts
+    │   └── pages/analyzer/
+    │       ├── analyzer.component.ts
+    │       ├── analyzer.component.html
+    │       └── analyzer.component.scss
+    └── ...
 ```
 
 ---
@@ -185,105 +186,93 @@ analizador_lexico/
 
 ### 1. Backend Python (Flask)
 
-```powershell
-# Entorno virtual
+```bash
 python -m venv venv
-.\venv\Scripts\Activate.ps1
+source venv/bin/activate      # Linux/Mac
+# .\venv\Scripts\Activate.ps1  # Windows
 
-# Dependencias
 pip install -r requirements.txt
 
-# Configurar .env
-# GROQ_API_KEY=gsk_tu_key_aqui
-# GROQ_MODEL=llama-3.3-70b-versatile
+# Crear .env con:
+#   GROQ_API_KEY=gsk_...
+#   GROQ_MODEL=llama-3.3-70b-versatile
+#   JAVA_SEMANTIC_URL=http://localhost:8090/api/validate-semantic
 
-# Ejecutar
 python app.py
+# → http://localhost:5000
 ```
-
-Servidor en `http://localhost:5000`.
 
 ### 2. Servicio Java (Semántica)
 
-```powershell
+```bash
 cd java_semantic
-.\run.ps1
+
+# Compilar
+javac -cp "lib/gson.jar" -d out $(find src -name "*.java")
+
+# Ejecutar
+java -cp "out:lib/gson.jar" semantic.SemanticServer
+# → http://localhost:8090
 ```
 
-Servidor en `http://localhost:8090`.
+> Si Java no está corriendo, la API responde con `503`.
 
-> Si Java no está corriendo, la API responde con `503` y un mensaje claro.
+### 3. Frontend Angular
 
-### 3. Frontend Angular (opcional)
-
-```powershell
+```bash
 cd frontend
 npm install
 npm start
+# → http://localhost:4200
 ```
-
-`http://localhost:4200`
 
 ---
 
-## Códigos HTTP de Respuesta
+## Códigos HTTP
 
 | Código | Significado |
 |--------|-------------|
-| **200** | Análisis completado (válido o inválido) |
-| **400** | El body no es JSON válido |
-| **401** | Falta el campo `source` o está vacío |
-| **502** | Error de comunicación con el servicio Java |
+| **200** | Análisis completado |
+| **400** | Body no es JSON |
+| **401** | `source` faltante o vacío |
+| **502** | Error en servicio Java |
 | **503** | Servicio Java no disponible |
 
 ---
 
-## Cómo Probar
+## API
 
-### Con Postman
+### `POST /api/analyze`
 
-```
-POST http://localhost:5000/api/analyze
-Content-Type: application/json
-
+```json
 {
-    "source": "convertir 100 celsius a fahrenheit"
+  "source": "convertir 100 celsius a fahrenheit"
 }
 ```
 
-### Con curl
-
-```bash
-curl -X POST http://localhost:5000/api/analyze ^
-  -H "Content-Type: application/json" ^
-  -d "{\"source\": \"convertir 100 celsius a fahrenheit\"}"
-```
-
-### Respuesta (200)
+Respuesta (200):
 
 ```json
 {
   "valid": true,
   "status": "correct",
   "message": "Instrucción semánticamente correcta.",
-  "lexical": {
-    "automata": [
-      {"token": "NUMERO", "lexeme": "100", "source": "AFD"},
-      {"token": "PREPOSICION_A", "lexeme": "a", "source": "AFD"}
-    ],
-    "llm": [
-      {"token": "CONVERTIR", "lexeme": "convertir", "source": "LLM"},
-      {"token": "UNIDAD_ORIGEN_C", "lexeme": "celsius", "source": "LLM"},
-      {"token": "UNIDAD_DESTINO_F", "lexeme": "fahrenheit", "source": "LLM"}
-    ],
-    "merged": [
-      {"token": "CONVERTIR", "lexeme": "convertir", "source": "LLM", "position": 0},
-      {"token": "NUMERO", "lexeme": "100", "source": "AFD", "position": 10},
-      {"token": "UNIDAD_ORIGEN_C", "lexeme": "celsius", "source": "LLM", "position": 14},
-      {"token": "PREPOSICION_A", "lexeme": "a", "source": "AFD", "position": 22},
-      {"token": "UNIDAD_DESTINO_F", "lexeme": "fahrenheit", "source": "LLM", "position": 24}
-    ]
-  },
+  "automata": [
+    {"token": "NUMERO", "lexeme": "100", "position": 10, "source": "AFD"},
+    {"token": "PREPOSICION_A", "lexeme": "a", "position": 22, "source": "AFD"}
+  ],
+  "llm": [
+    {"token": "CONVERTIR", "lexeme": "convertir", "position": 0, "source": "LLM"},
+    {"token": "UNIDAD_ORIGEN_C", "lexeme": "celsius", "position": 14, "source": "LLM"},
+    {"token": "UNIDAD_DESTINO_F", "lexeme": "fahrenheit", "position": 24, "source": "LLM"}
+  ],
+  "merged": [
+    {"token": "CONVERTIR", "lexeme": "convertir", "source": "LLM", "position": 0},
+    {"token": "NUMERO", "lexeme": "100", "source": "AFD", "position": 10},
+    {"token": "UNIDAD_ORIGEN_C", "lexeme": "celsius", "source": "LLM", "position": 14},
+    {"token": "PREPOSICION_A", "lexeme": "a", "source": "AFD", "position": 22},
+    {"token": "UNIDAD_DESTINO_F", "lexeme": "fahrenheit", "source": "LLM", "position": 24}
+  ],
   "syntax": {
     "valid": true,
     "message": "Instrucción sintácticamente correcta."
@@ -293,35 +282,48 @@ curl -X POST http://localhost:5000/api/analyze ^
     "message": "Instrucción semánticamente correcta.",
     "details": {
       "numero": 100.0,
+      "unidad_origen_token": "UNIDAD_ORIGEN_C",
+      "unidad_destino_token": "UNIDAD_DESTINO_F",
       "unidad_origen": "CELSIUS",
       "unidad_destino": "FAHRENHEIT"
     }
   },
+  "conversion": {
+    "value": 212.0,
+    "from": {"unit": "CELSIUS", "value": 100.0},
+    "to": {"unit": "FAHRENHEIT", "value": 212.0},
+    "formula": "100.0 °C × 1.8 + 32 = 212.0 °F"
+  },
   "metrics": {
-    "automata_ms": 0.5,
-    "llm_ms": 1200.0,
-    "total_ms": 1202.0
+    "automata_ms": 0.3,
+    "llm_ms": 850.0,
+    "total_ms": 852.0
   }
 }
 ```
 
-### Ejemplos para probar
+---
 
-| Entrada | Esperado |
-|---------|----------|
-| `convertir 100 celsius a fahrenheit` | ✅ Válido |
-| `convertir 0 celsius a kelvin` | ❌ Número debe ser > 0 |
-| `convertir 100 celsius a celsius` | ❌ Misma unidad |
-| `convertir -10 kelvin a celsius` | ❌ Kelvin negativo |
-| `convertir a fahrenheit` | ❌ Falta NUMERO |
-| `hola mundo` | ❌ Falta CONVERTIR |
+## Casos de Prueba
+
+| Entrada | Fase que falla | Mensaje |
+|---------|---------------|---------|
+| `convertir 100 celsius a fahrenheit` | — | ✅ Conversión exitosa |
+| `convertir -5 celsius a fahrenheit` | — | ✅ Negativo permitido en °C/°F |
+| `convertir 0 celsius a kelvin` | — | ✅ Cero permitido |
+| `convertir -10 kelvin a celsius` | Semántica | ❌ Kelvin no admite valores negativos. |
+| `convertir 100 celsius a celsius` | Semántica | ❌ La unidad origen y destino son iguales. |
+| `convertir a fahrenheit` | Sintaxis | ❌ Falta el número a convertir. |
+| `100 celsius a fahrenheit` | Sintaxis | ❌ Falta la palabra 'convertir'. |
+| `convertir 100 celsius kelvin` | Sintaxis | ❌ Falta la preposición 'a'. |
+| `hola mundo` | Sintaxis | ❌ Falta la palabra 'convertir'. |
 
 ---
 
 ## Variables de Entorno (`.env`)
 
-| Variable | Descripción | Valor ejemplo |
-|----------|-------------|---------------|
+| Variable | Descripción | Ejemplo |
+|----------|-------------|---------|
 | `GROQ_API_KEY` | API Key de Groq | `gsk_...` |
 | `GROQ_MODEL` | Modelo Groq | `llama-3.3-70b-versatile` |
 | `FLASK_PORT` | Puerto Flask | `5000` |

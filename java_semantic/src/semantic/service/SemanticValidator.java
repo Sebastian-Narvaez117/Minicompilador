@@ -9,12 +9,10 @@ import java.util.Map;
 
 /**
  * Validador semántico (reglas de negocio).
- * Equivalente al SemanticValidator.py que estaba en Python, ahora migrado a Java.
  *
  * Reglas:
  *   Regla 1: No convertir una unidad a sí misma (ej: celsius -> celsius).
- *   Regla 2: El número debe ser positivo (mayor a 0).
- *   Regla 3: Kelvin no admite valores negativos.
+ *   Regla 2: Kelvin no admite valores negativos.
  */
 public class SemanticValidator {
 
@@ -40,7 +38,6 @@ public class SemanticValidator {
             Map<String, Object> data = extractData(ast);
 
             validateSameUnit(data);
-            validatePositiveNumber(data);
             validateKelvinNotNegative(data);
 
             Map<String, Object> result = new LinkedHashMap<>();
@@ -105,15 +102,7 @@ public class SemanticValidator {
         }
     }
 
-    /** Regla 2: El número debe ser mayor que cero. */
-    private void validatePositiveNumber(Map<String, Object> data) throws NegativeValueException {
-        double numero = (double) data.get("numero");
-        if (numero <= 0) {
-            throw new NegativeValueException();
-        }
-    }
-
-    /** Regla 3: Kelvin no admite valores negativos (cero absoluto). */
+    /** Regla 2: Kelvin no admite valores negativos (cero absoluto). */
     private void validateKelvinNotNegative(Map<String, Object> data) throws NegativeKelvinException {
         String unidadOrigen = (String) data.get("unidad_origen");
         double numero = (double) data.get("numero");

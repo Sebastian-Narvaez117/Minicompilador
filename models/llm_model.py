@@ -75,12 +75,16 @@ class LLMModel:
             data["tokens"] = []
 
         valid_tokens = []
+        search_start = 0
         for token in data["tokens"]:
             if "token" not in token or "lexeme" not in token:
                 continue
 
             lexeme = str(token["lexeme"]).strip()
-            position = source_text.lower().find(lexeme.lower())
+            position = source_text.lower().find(lexeme.lower(), search_start)
+
+            if position == -1:
+                position = source_text.lower().find(lexeme.lower())
 
             if position == -1:
                 print(f"[LLM] Token descartado: {lexeme}")
@@ -89,6 +93,7 @@ class LLMModel:
             token["position"] = position
             token["length"] = len(lexeme)
             token["source"] = "LLM"
+            search_start = position + len(lexeme)
             valid_tokens.append(token)
 
         data["tokens"] = valid_tokens
@@ -143,11 +148,13 @@ CELSIUS
 - grado centígrado
 - grados centígrados
 - °C
+- °c
 
 FAHRENHEIT
 - fahrenheit
 - grados fahrenheit
 - °F
+- °f
 
 KELVIN
 - kelvin

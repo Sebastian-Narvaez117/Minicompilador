@@ -9,7 +9,7 @@ class Automata:
     """
 
     TOKEN_PATTERNS = [
-        ("NUMERO", r"\d+(\.\d+)?"),
+        ("NUMERO", r"-?\d+(\.\d+)?"),
         ("PREPOSICION_A", r"\ba\b"),
         ("SPACE", r"\s+"),
         ("UNKNOWN", r"[^\s]+"),

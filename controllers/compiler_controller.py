@@ -8,9 +8,10 @@ import requests
 from models.automata import Automata
 from models.llm_model import LLMModel
 from services.syntax_service import SyntaxService
+from services.conversion_service import convert as convert_temperature
 
 
-JAVA_SEMANTIC_URL = os.getenv("JAVA_SEMANTIC_URL", "http://localhost:8090/api/validate-semantic")
+JAVA_SEMANTIC_URL = os.getenv("JAVA_SEMANTIC_URL")
 
 
 class CompilerController:
@@ -70,6 +71,18 @@ class CompilerController:
         if syntax_result.get("valid"):
             semantic_result = self._call_java_semantic_service(syntax_result.get("tree"))
             if semantic_result.get("valid"):
+                details = semantic_result.get("details", {})
+                conversion = None
+                if details:
+                    try:
+                        conversion = convert_temperature(
+                            details["numero"],
+                            details["unidad_origen_token"],
+                            details["unidad_destino_token"],
+                        )
+                    except Exception as e:
+                        conversion = {"error": str(e)}
+
                 return {
                     "source": source,
                     "automata": automata_tokens,
@@ -82,6 +95,7 @@ class CompilerController:
                     "lexical": {"automata": automata_tokens, "llm": llm_tokens, "merged": merged_tokens},
                     "syntax": syntax_result,
                     "semantic": semantic_result,
+                    "conversion": conversion,
                     "metrics": metrics,
                 }
 
