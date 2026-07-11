@@ -15,6 +15,14 @@ export interface Metrics {
   total_ms: number;
 }
 
+export interface ConversionResult {
+  value: number;
+  from: { unit: string; value: number };
+  to: { unit: string; value: number };
+  formula: string;
+  error?: string;
+}
+
 export interface AnalyzeResponse {
   source: string;
   valid: boolean;
@@ -26,5 +34,6 @@ export interface AnalyzeResponse {
   lexical: { automata: Token[]; llm: Token[]; merged: Token[] };
   syntax?: PhaseResult;
   semantic?: PhaseResult;
+  conversion?: ConversionResult;
   metrics?: Metrics;
 }

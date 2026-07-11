@@ -153,6 +153,34 @@
       </mat-card>
     </section>
 
+    <!-- CONVERSION RESULT -->
+    @if (res.conversion && res.conversion.value !== undefined) {
+      <section class="conversion-section">
+        <mat-card class="conversion-card">
+          <div class="conversion-header">
+            <mat-icon style="color:#4dd0e1">swap_horiz</mat-icon>
+            <h3>Resultado de conversión</h3>
+          </div>
+          <div class="conversion-body">
+            <div class="conversion-value">
+              <span class="conv-from">
+                <strong>{{ res.conversion.from.value }}</strong>
+                <span class="conv-unit">{{ res.conversion.from.unit }}</span>
+              </span>
+              <mat-icon class="conv-arrow">arrow_forward</mat-icon>
+              <span class="conv-to">
+                <strong>{{ res.conversion.to.value }}</strong>
+                <span class="conv-unit">{{ res.conversion.to.unit }}</span>
+              </span>
+            </div>
+            <div class="conversion-formula">
+              <code>{{ res.conversion.formula }}</code>
+            </div>
+          </div>
+        </mat-card>
+      </section>
+    }
+
     <!-- TOKENS -->
     <section class="tokens-section">
       <h2 class="section-title">Tokens</h2>
