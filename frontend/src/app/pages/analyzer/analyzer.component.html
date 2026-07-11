@@ -9,6 +9,12 @@
         <h1>Minicompilador</h1>
         <p class="brand-sub">AFD + LLM &rarr; Parser &rarr; Java</p>
       </div>
+      @if (response()?.model; as model) {
+        <span class="model-badge" [class.groq]="model.provider === 'Groq'" [class.ollama]="model.provider === 'Ollama'">
+          <mat-icon>psychology</mat-icon>
+          {{ model.provider }} · {{ model.model_name }}
+        </span>
+      }
     </div>
   </header>
 

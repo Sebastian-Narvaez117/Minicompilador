@@ -1,28 +1,24 @@
-import os
-import threading
 import time
-from typing import Dict, Any, List
-
-import requests
+from concurrent.futures import ThreadPoolExecutor, wait
+from typing import Dict, Any
 
 from models.automata import Automata
-from models.llm_model import LLMModel
+from services.llm_factory import LLMFactory
 from services.syntax_service import SyntaxService
+from services.merge_service import MergeService
+from services.semantic_client import SemanticClient
 from services.conversion_service import convert as convert_temperature
 
 
-JAVA_SEMANTIC_URL = os.getenv("JAVA_SEMANTIC_URL")
-
-
 class CompilerController:
-    """Orquestador del pipeline de análisis: AFD → LLM → Merge → Sintaxis → Semántica (Java)."""
-
     def __init__(self):
         self.automata = Automata()
-        self.llm = LLMModel()
+        self.llm = LLMFactory.create()
+        self.syntax_service = SyntaxService()
+        self.merge_service = MergeService()
+        self.semantic_client = SemanticClient()
 
     def analyze(self, source: str) -> Dict[str, Any]:
-        """Punto de entrada: recibe el texto, lo analiza completo y retorna el resultado."""
         source = source.strip()
 
         if not source:
@@ -31,45 +27,45 @@ class CompilerController:
         return self._compile(source)
 
     def _compile(self, source: str) -> Dict[str, Any]:
-        result_automata: Dict[str, Any] = {}
-        result_llm: Dict[str, Any] = {}
-        metrics: Dict[str, Any] = {}
-
-        def run_automata():
-            print("[Thread-AFD] Ejecutando AFD...")
-            start = time.perf_counter()
-            result_automata["tokens"] = self.automata.analyze(source)
-            metrics["automata_ms"] = round((time.perf_counter() - start) * 1000, 3)
-            print("[Thread-AFD] Finalizado.")
-
-        def run_llm():
-            print("[Thread-LLM] Ejecutando LLM...")
-            start = time.perf_counter()
-            response = self.llm.normalize(source)
-            result_llm["tokens"] = response.get("tokens", [])
-            metrics["llm_ms"] = round((time.perf_counter() - start) * 1000, 3)
-            print("[Thread-LLM] Finalizado.")
-
         total_start = time.perf_counter()
 
-        thread_afd = threading.Thread(target=run_automata, name="Thread-AFD")
-        thread_afd.start()
-        thread_afd.join()
+        def timed_automata():
+            start = time.perf_counter()
+            tokens = self.automata.analyze(source)
+            ms = round((time.perf_counter() - start) * 1000, 3)
+            return tokens, ms
 
-        thread_llm = threading.Thread(target=run_llm, name="Thread-LLM")
-        thread_llm.start()
-        thread_llm.join()
+        def timed_llm():
+            start = time.perf_counter()
+            response = self.llm.normalize(source)
+            ms = round((time.perf_counter() - start) * 1000, 3)
+            return response, ms
 
-        metrics["total_ms"] = round((time.perf_counter() - total_start) * 1000, 3)
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            fut_afd = executor.submit(timed_automata)
+            fut_llm = executor.submit(timed_llm)
+            wait([fut_afd, fut_llm])
 
-        automata_tokens = result_automata.get("tokens", [])
-        llm_tokens = result_llm.get("tokens", [])
-        merged_tokens = self._merge_tokens(automata_tokens, llm_tokens)
+            automata_tokens, automata_ms = fut_afd.result()
+            llm_response, llm_ms = fut_llm.result()
 
-        syntax_result = self._run_syntax_analysis(merged_tokens)
+        total_ms = round((time.perf_counter() - total_start) * 1000, 3)
+
+        metrics = {
+            "automata_ms": automata_ms,
+            "llm_ms": llm_ms,
+            "total_ms": total_ms,
+        }
+
+        model = self.llm.model_info
+
+        llm_tokens = llm_response.get("tokens", [])
+        merged_tokens = self.merge_service.merge(automata_tokens, llm_tokens)
+
+        syntax_result = self.syntax_service.validate(merged_tokens)
 
         if syntax_result.get("valid"):
-            semantic_result = self._call_java_semantic_service(syntax_result.get("tree"))
+            semantic_result = self.semantic_client.validate(syntax_result.get("tree"))
             if semantic_result.get("valid"):
                 details = semantic_result.get("details", {})
                 conversion = None
@@ -97,6 +93,7 @@ class CompilerController:
                     "semantic": semantic_result,
                     "conversion": conversion,
                     "metrics": metrics,
+                    "model": model,
                 }
 
             return {
@@ -112,6 +109,7 @@ class CompilerController:
                 "syntax": syntax_result,
                 "semantic": semantic_result,
                 "metrics": metrics,
+                "model": model,
             }
 
         return {
@@ -127,37 +125,5 @@ class CompilerController:
             "syntax": syntax_result,
             "semantic": {"valid": False, "status": "invalid", "message": "No se realizó análisis semántico."},
             "metrics": metrics,
+            "model": model,
         }
-
-    def _merge_tokens(self, automata_tokens: List[Dict[str, Any]], llm_tokens: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-        """Combina tokens del AFD y del LLM ordenándolos por posición en el texto original."""
-        cleaned_automata = [token for token in automata_tokens if token.get("token") != "UNKNOWN"]
-        merged = cleaned_automata + [token for token in llm_tokens if token.get("position", -1) != -1]
-        merged.sort(key=lambda item: item.get("position", 0))
-        return merged
-
-    def _run_syntax_analysis(self, tokens: List[Dict[str, Any]]) -> Dict[str, Any]:
-        service = SyntaxService()
-        return service.validate(tokens)
-
-    def _call_java_semantic_service(self, ast_dict: Dict[str, Any]) -> Dict[str, Any]:
-        try:
-            response = requests.post(
-                JAVA_SEMANTIC_URL,
-                json={"tree": ast_dict},
-                timeout=30
-            )
-            response.raise_for_status()
-            return response.json()
-        except requests.ConnectionError:
-            return {
-                "valid": False,
-                "status": "unavailable",
-                "message": "Servicio semántico (Java) no disponible."
-            }
-        except requests.RequestException as e:
-            return {
-                "valid": False,
-                "status": "error",
-                "message": f"Error en el servicio semántico: {e}"
-            }

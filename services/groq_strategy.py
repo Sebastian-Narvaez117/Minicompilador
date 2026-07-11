@@ -1,28 +1,27 @@
 import json
 import os
 import re
-import requests
 
+import requests
 from dotenv import load_dotenv
+
+from services.llm_provider import LLMProvider
 
 load_dotenv()
 
 
-class LLMModel:
-    """Cliente LLM para tokenización vía Groq.
-    Reconoce tokens semánticos que el AFD no puede detectar:
-    CONVERTIR, UNIDAD_ORIGEN_C/F/K, UNIDAD_DESTINO_C/F/K.
-    Los tipos de tokens y sinónimos se definen en _build_prompt().
-    """
-
+class GroqStrategy(LLMProvider):
     def __init__(self):
         self.api_key = os.getenv("GROQ_API_KEY")
         self.model = os.getenv("GROQ_MODEL", "llama3-70b-8192")
         if not self.api_key:
             raise ValueError("GROQ_API_KEY no está definida en .env")
 
+    @property
+    def model_info(self):
+        return {"provider": "Groq", "model_name": self.model}
+
     def normalize(self, source: str):
-        """Envía el texto a Groq y retorna los tokens reconocidos con posición en el texto original."""
         source_text = str(source)
         prompt = self._build_prompt(source_text)
 
@@ -48,14 +47,10 @@ class LLMModel:
             response.raise_for_status()
             text = response.json()["choices"][0]["message"]["content"].strip()
         except requests.RequestException as exc:
-            print(f"[LLM] Groq no disponible: {exc}")
+            print(f"[Groq] Groq no disponible: {exc}")
             if hasattr(exc, 'response') and exc.response is not None:
-                print(f"[LLM] Respuesta: {exc.response.text}")
+                print(f"[Groq] Respuesta: {exc.response.text}")
             return {"tokens": []}
-
-        print("\n========== RESPUESTA DE GROQ ==========")
-        print(text)
-        print("========================================\n")
 
         if text.startswith("```"):
             text = text.replace("```json", "")
@@ -87,7 +82,7 @@ class LLMModel:
                 position = source_text.lower().find(lexeme.lower())
 
             if position == -1:
-                print(f"[LLM] Token descartado: {lexeme}")
+                print(f"[Groq] Token descartado: {lexeme}")
                 continue
 
             token["position"] = position

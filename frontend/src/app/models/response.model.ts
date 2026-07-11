@@ -23,6 +23,11 @@ export interface ConversionResult {
   error?: string;
 }
 
+export interface ModelInfo {
+  provider: string;
+  model_name: string;
+}
+
 export interface AnalyzeResponse {
   source: string;
   valid: boolean;
@@ -36,4 +41,5 @@ export interface AnalyzeResponse {
   semantic?: PhaseResult;
   conversion?: ConversionResult;
   metrics?: Metrics;
+  model?: ModelInfo;
 }

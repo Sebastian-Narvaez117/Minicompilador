@@ -1,6 +1,6 @@
 # Minicompilador — Conversión de Unidades de Temperatura
 
-Sistema que analiza instrucciones en lenguaje natural como `convertir 100 celsius a fahrenheit` y devuelve el resultado de la conversión. Combina un **AFD** (regex) con un **LLM** (Groq) para el análisis léxico, un **parser descendente recursivo** para la sintaxis, un **servicio Java** para la semántica, y una **fase de conversión** que aplica las fórmulas.
+Sistema que analiza instrucciones en lenguaje natural como `convertir 100 celsius a fahrenheit` y devuelve el resultado de la conversión. Combina un **AFD** (regex) con un **LLM** (Groq u Ollama) para el análisis léxico, un **parser descendente recursivo** para la sintaxis, un **servicio Java** para la semántica, y una **fase de conversión** que aplica las fórmulas.
 
 ---
 
@@ -15,20 +15,25 @@ app.py  (Flask)
   ├── controllers/compiler_controller.py  ← ORQUESTACIÓN
   │     AFD → LLM → Merge → Sintaxis → Semántica → Conversión
   │
-  ├── services/
-  │   ├── syntax_service.py            ← Validación sintáctica
-  │   └── conversion_service.py        ← Fórmulas de temperatura
+  ├── services/                        ← CAPA DE SERVICIOS
+  │   ├── llm_provider.py       (ABC para proveedores LLM)
+  │   ├── groq_strategy.py      (implementación Groq)
+  │   ├── ollama_strategy.py    (implementación Ollama)
+  │   ├── llm_factory.py        (selecciona estrategia según .env)
+  │   ├── merge_service.py      (fusión de tokens AFD + LLM)
+  │   ├── semantic_client.py    (comunicación con Java)
+  │   ├── syntax_service.py     (validación sintáctica)
+  │   └── conversion_service.py (fórmulas de temperatura)
   │
-  ├── models/
-  │   ├── token.py           (Token)
-  │   ├── ast.py             (ASTNode)
-  │   ├── errors.py          (ParserError)
-  │   ├── automata.py        (AFD: NUMERO, PREPOSICION_A)
-  │   ├── llm_model.py       (Groq: CONVERTIR, UNIDADES)
-  │   └── parser.py          (parser descendente recursivo)
+  ├── models/                         ← CAPA DE MODELOS
+  │   ├── token.py             (Token)
+  │   ├── ast.py               (ASTNode)
+  │   ├── errors.py            (ParserError)
+  │   ├── automata.py          (AFD: NUMERO, PREPOSICION_A)
+  │   └── parser.py            (parser descendente recursivo)
   │
-  └── java_semantic/                   ← Microservicio Java (puerto 8090)
-        valida reglas semánticas
+  └── java_semantic/                  ← MICROSERVICIO JAVA (puerto 8090)
+        Valida reglas semánticas.
 ```
 
 ---
@@ -40,20 +45,21 @@ app.py  (Flask)
           │
   ┌───────┴───────┐
   ▼               ▼
-AFD             LLM (Groq)
-(regex)         (prompt)
+AFD             LLM (Groq u Ollama)
+(regex)         (strategy pattern)
   │               │
   │ NUMERO "-5"   │ CONVERTIR
   │ PREPOSICION_A │ UNIDAD_ORIGEN_C
   │               │ UNIDAD_DESTINO_K
   └───────┬───────┘
           ▼
-     MERGE por posición
+     MERGE (MergeService)
+     fusiona y ordena por posición
           │
           ▼
      FASE 2: SINTAXIS (parser)
      ¿orden correcto?
-     Si → AST
+     Si → genera AST
      No → error "incomplete"/"invalid"
           │
           ▼
@@ -62,11 +68,60 @@ AFD             LLM (Groq)
      • Regla 2: ¿Kelvin ≥ 0?
           │
           ▼
-     FASE 4: CONVERSIÓN (Python)
+     FASE 4: CONVERSIÓN (conversion_service)
      Aplica fórmula según par (origen, destino)
           │
           ▼
      RESPUESTA JSON
+```
+
+El AFD y el LLM se ejecutan **en paralelo** mediante `ThreadPoolExecutor(max_workers=2)`, de modo que el tiempo total se aproxima al máximo de ambas tareas y no a la suma.
+
+---
+
+## Patrón Strategy — Proveedores LLM
+
+El sistema usa el patrón **Strategy** para seleccionar el proveedor de LLM sin modificar el resto del código.
+
+### Clases
+
+| Clase | Rol |
+|---|---|
+| `LLMProvider` (ABC) | Interfaz abstracta con método `normalize(source)` |
+| `GroqStrategy` | Implementación para la API de Groq |
+| `OllamaStrategy` | Implementación para Ollama (local) |
+| `LLMFactory` | Factory que crea la estrategia según `LLM_PROVIDER` |
+
+### Cómo cambiar de proveedor
+
+Editar únicamente la variable `LLM_PROVIDER` en `.env`:
+
+```env
+# Para usar Groq (nube):
+LLM_PROVIDER=groq
+
+# Para usar Ollama (local):
+LLM_PROVIDER=ollama
+```
+
+**No es necesario modificar ninguna otra clase.** El `CompilerController` obtiene el proveedor mediante:
+
+```python
+self.llm = LLMFactory.create()  # ← polimórfico
+```
+
+### Variables de entorno por proveedor
+
+**Groq:**
+```
+GROQ_API_KEY=gsk_...
+GROQ_MODEL=llama-3.3-70b-versatile
+```
+
+**Ollama:**
+```
+MODEL_LOCAL_LLAMA=llama3.2:3b
+HOST_MODEL_LOCAL_LLAMA=http://localhost:11434/api/generate
 ```
 
 ---
@@ -82,9 +137,7 @@ AFD             LLM (Groq)
 | `SPACE` | `\s+` | (se ignora) |
 | `UNKNOWN` | `[^\s]+` | (se filtra, lo toma el LLM) |
 
-### LLM (Groq) — `models/llm_model.py`
-
-El prompt define sinónimos. El LLM distingue si la unidad está antes o después de la preposición "a" para asignar `UNIDAD_ORIGEN_*` o `UNIDAD_DESTINO_*`.
+### LLM — definido en el prompt de cada estrategia
 
 | Token | Sinónimos |
 |-------|-----------|
@@ -104,9 +157,9 @@ UnidadDestino  ::= UNIDAD_DESTINO_C | UNIDAD_DESTINO_F | UNIDAD_DESTINO_K
 
 ---
 
-## Reglas Semánticas (Java — `SemanticValidator.java`)
+## Reglas Semánticas (Java)
 
-1. **Misma unidad**: No convertir una unidad a sí misma (ej: celsius → celsius).
+1. **Misma unidad**: No convertir una unidad a sí misma.
 2. **Kelvin no negativo**: Si el origen es Kelvin, el valor debe ser ≥ 0.
 
 Celsius y Fahrenheit **sí** aceptan valores negativos.
@@ -131,20 +184,25 @@ Celsius y Fahrenheit **sí** aceptan valores negativos.
 ```
 Minicompilador/
 ├── app.py                          # Flask entry point
-├── .env                            # GROQ_API_KEY, JAVA_SEMANTIC_URL, etc.
+├── .env                            # Configuración (proveedor, APIs, etc.)
 ├── requirements.txt
 │
-├── models/
-│   ├── token.py                    # Token (token, lexeme, position, source)
+├── models/                         # Datos del dominio
+│   ├── token.py                    # Token  (token, lexeme)
 │   ├── ast.py                      # ASTNode (name, value, children)
 │   ├── errors.py                   # ParserError, UnexpectedTokenError, MissingTokenError
 │   ├── automata.py                 # AFD con regex
-│   ├── llm_model.py                # Cliente Groq para tokenización
 │   └── parser.py                   # Parser descendente recursivo
 │
-├── services/
-│   ├── syntax_service.py           # Wrapper del parser
-│   └── conversion_service.py       # Lógica de conversión térmica
+├── services/                       # Lógica de negocio y algoritmos
+│   ├── llm_provider.py             # ABC para proveedores LLM
+│   ├── groq_strategy.py            # Estrategia Groq
+│   ├── ollama_strategy.py          # Estrategia Ollama
+│   ├── llm_factory.py              # Factory de proveedores LLM
+│   ├── merge_service.py            # Fusión de tokens AFD + LLM
+│   ├── semantic_client.py          # Cliente HTTP para servicio Java
+│   ├── syntax_service.py           # Validación sintáctica
+│   └── conversion_service.py       # Fórmulas de temperatura
 │
 ├── controllers/
 │   └── compiler_controller.py      # Orquesta el pipeline completo
@@ -155,7 +213,7 @@ Minicompilador/
 ├── java_semantic/
 │   ├── lib/gson.jar
 │   └── src/semantic/
-│       ├── SemanticServer.java         # Servidor HTTP (puerto 8090)
+│       ├── SemanticServer.java
 │       ├── service/SemanticValidator.java
 │       ├── model/AstNode.java
 │       └── exception/
@@ -167,17 +225,10 @@ Minicompilador/
 │   └── test_syntax_validator.py
 │
 └── frontend/                       # Angular 20 (standalone)
-    ├── src/app/
-    │   ├── models/
-    │   │   ├── token.model.ts
-    │   │   └── response.model.ts
-    │   ├── core/services/
-    │   │   └── lexical.service.ts
-    │   └── pages/analyzer/
-    │       ├── analyzer.component.ts
-    │       ├── analyzer.component.html
-    │       └── analyzer.component.scss
-    └── ...
+    └── src/app/
+        ├── models/
+        ├── core/services/
+        └── pages/analyzer/
 ```
 
 ---
@@ -188,16 +239,10 @@ Minicompilador/
 
 ```bash
 python -m venv venv
-source venv/bin/activate      # Linux/Mac
-# .\venv\Scripts\Activate.ps1  # Windows
-
+source venv/bin/activate              # Linux/Mac
 pip install -r requirements.txt
 
-# Crear .env con:
-#   GROQ_API_KEY=gsk_...
-#   GROQ_MODEL=llama-3.3-70b-versatile
-#   JAVA_SEMANTIC_URL=http://localhost:8090/api/validate-semantic
-
+# Configurar .env (ver sección Variables de Entorno)
 python app.py
 # → http://localhost:5000
 ```
@@ -206,11 +251,7 @@ python app.py
 
 ```bash
 cd java_semantic
-
-# Compilar
 javac -cp "lib/gson.jar" -d out $(find src -name "*.java")
-
-# Ejecutar
 java -cp "out:lib/gson.jar" semantic.SemanticServer
 # → http://localhost:8090
 ```
@@ -225,18 +266,6 @@ npm install
 npm start
 # → http://localhost:4200
 ```
-
----
-
-## Códigos HTTP
-
-| Código | Significado |
-|--------|-------------|
-| **200** | Análisis completado |
-| **400** | Body no es JSON |
-| **401** | `source` faltante o vacío |
-| **502** | Error en servicio Java |
-| **503** | Servicio Java no disponible |
 
 ---
 
@@ -273,10 +302,7 @@ Respuesta (200):
     {"token": "PREPOSICION_A", "lexeme": "a", "source": "AFD", "position": 22},
     {"token": "UNIDAD_DESTINO_F", "lexeme": "fahrenheit", "source": "LLM", "position": 24}
   ],
-  "syntax": {
-    "valid": true,
-    "message": "Instrucción sintácticamente correcta."
-  },
+  "syntax": {"valid": true, "message": "Instrucción sintácticamente correcta."},
   "semantic": {
     "valid": true,
     "message": "Instrucción semánticamente correcta.",
@@ -294,13 +320,19 @@ Respuesta (200):
     "to": {"unit": "FAHRENHEIT", "value": 212.0},
     "formula": "100.0 °C × 1.8 + 32 = 212.0 °F"
   },
-  "metrics": {
-    "automata_ms": 0.3,
-    "llm_ms": 850.0,
-    "total_ms": 852.0
-  }
+  "metrics": {"automata_ms": 0.3, "llm_ms": 850.0, "total_ms": 852.0}
 }
 ```
+
+### Códigos HTTP
+
+| Código | Significado |
+|--------|-------------|
+| **200** | Análisis completado |
+| **400** | Body no es JSON |
+| **401** | `source` faltante o vacío |
+| **502** | Error en servicio Java |
+| **503** | Servicio Java no disponible |
 
 ---
 
@@ -322,10 +354,13 @@ Respuesta (200):
 
 ## Variables de Entorno (`.env`)
 
-| Variable | Descripción | Ejemplo |
-|----------|-------------|---------|
-| `GROQ_API_KEY` | API Key de Groq | `gsk_...` |
-| `GROQ_MODEL` | Modelo Groq | `llama-3.3-70b-versatile` |
-| `FLASK_PORT` | Puerto Flask | `5000` |
-| `FLASK_DEBUG` | Modo debug | `True` |
-| `JAVA_SEMANTIC_URL` | URL del servicio Java | `http://localhost:8090/api/validate-semantic` |
+| Variable | Obligatorio | Descripción | Ejemplo |
+|----------|-------------|-------------|---------|
+| `LLM_PROVIDER` | Sí | Proveedor LLM (`groq` o `ollama`) | `groq` |
+| `GROQ_API_KEY` | Si `PROVIDER=groq` | API Key de Groq | `gsk_...` |
+| `GROQ_MODEL` | Si `PROVIDER=groq` | Modelo Groq | `llama-3.3-70b-versatile` |
+| `MODEL_LOCAL_LLAMA` | Si `PROVIDER=ollama` | Modelo local Ollama | `llama3.2:3b` |
+| `HOST_MODEL_LOCAL_LLAMA` | Si `PROVIDER=ollama` | URL del servidor Ollama | `http://localhost:11434/api/generate` |
+| `JAVA_SEMANTIC_URL` | Sí | URL del servicio Java | `http://localhost:8090/api/validate-semantic` |
+| `FLASK_PORT` | No | Puerto Flask (default `5000`) | `5000` |
+| `FLASK_DEBUG` | No | Modo debug (default `True`) | `True` |

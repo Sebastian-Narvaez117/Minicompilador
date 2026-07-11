@@ -64,6 +64,36 @@
   letter-spacing: 0.02em;
 }
 
+.model-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  margin-left: auto;
+  padding: 0.3rem 0.7rem;
+  border-radius: 999px;
+  font-size: 0.72rem;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.model-badge.groq {
+  background: rgba(123, 97, 255, 0.15);
+  color: #b8a8ff;
+  border: 1px solid rgba(123, 97, 255, 0.25);
+}
+
+.model-badge.ollama {
+  background: rgba(255, 152, 0, 0.15);
+  color: #ffcc80;
+  border: 1px solid rgba(255, 152, 0, 0.25);
+}
+
+.model-badge mat-icon {
+  font-size: 14px;
+  width: 14px;
+  height: 14px;
+}
+
 /* ── Input section ── */
 .input-card {
   padding: 1.5rem;
